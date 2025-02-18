@@ -1,92 +1,92 @@
 # Home Assistant Search Card
 
-Eine benutzerdefinierte Karte für Home Assistant, die eine Echtzeit-Suchfunktion für alle Ihre Entitäten bereitstellt.
+A custom card for Home Assistant that provides real-time search functionality across all your entities. Quickly find and access any entity in your Home Assistant instance through an intuitive search interface.
+
+![Example Screenshot](https://raw.githubusercontent.com/fastender/ha-search-card/main/examples/screenshot.png)
 
 ## Features
 
-- 🔍 Echtzeit-Suche über alle Home Assistant Entitäten
-- 🏠 Filterung nach Räumen, Gerätetypen und Namen
-- 🎨 Automatische Anpassung an Ihr Home Assistant Theme
-- 📱 Responsive Design für alle Bildschirmgrößen
-- ⚡ Schnelle Leistung durch optimierte Suche
-- 🔌 Einfache Installation und Konfiguration
+- 🔍 Real-time search across all Home Assistant entities
+- 🏠 Filter by rooms, device types, and names
+- 🎨 Automatically adapts to your Home Assistant theme
+- 📱 Responsive design for all screen sizes
+- ⚡ Fast performance with optimized search
+- 🔌 Easy installation and configuration
 
 ## Installation
 
-### HACS (Empfohlen)
+### Option 1: HACS (Recommended)
 
-1. Öffnen Sie HACS in Home Assistant
-2. Gehen Sie zu "Frontend"
-3. Klicken Sie auf die drei Punkte oben rechts
-4. Wählen Sie "Benutzerdefinierte Repositories"
-5. Fügen Sie diese URL hinzu: `https://github.com/fastender/ha-search-card`
-6. Wählen Sie Kategorie "Lovelace"
-7. Klicken Sie auf "Hinzufügen"
-8. Installieren Sie die "Home Assistant Search Card"
-9. Starten Sie Home Assistant neu
+1. Open HACS in Home Assistant
+2. Click the menu icon in the top right corner
+3. Select "Custom repositories"
+4. Add `https://github.com/fastender/ha-search-card` with category "Lovelace"
+5. Click "Install"
+6. Restart Home Assistant
 
-### Manuelle Installation
+### Option 2: Manual Installation
 
-1. Laden Sie `ha-search-card.js` aus dem `dist` Ordner herunter
-2. Kopieren Sie die Datei in Ihr `www` Verzeichnis
-3. Fügen Sie folgende Zeilen zu Ihrer `configuration.yaml` hinzu:
+1. Download `ha-search-card.js` from the latest release
+2. Copy it to your `www` directory in Home Assistant
+3. Add the following to your `configuration.yaml`:
 ```yaml
 frontend:
   extra_module_url:
     - /local/ha-search-card.js
 ```
-4. Starten Sie Home Assistant neu
+4. Restart Home Assistant
 
-## Verwendung
+## Usage
 
-1. Öffnen Sie Ihr Dashboard
-2. Klicken Sie auf "Dashboard bearbeiten"
-3. Wählen Sie "+ KARTE HINZUFÜGEN"
-4. Scrollen Sie nach unten zu "Nach Karten suchen"
-5. Wählen Sie "Custom: Search Card"
+### Basic Configuration
 
-Oder fügen Sie manuell folgende YAML-Konfiguration hinzu:
+Add the card to your dashboard:
 ```yaml
 type: 'custom:ha-search-card'
 ```
 
-## Konfigurationsoptionen
+### Advanced Configuration
 
-| Option | Typ | Standard | Beschreibung |
-|--------|------|---------|--------------|
-| title | string | 'Entitäten Suche' | Titel der Karte |
-| icon | string | 'mdi:magnify' | Icon für die Suchkarte |
-| excluded_entities | list | [] | Liste von Entitäten, die ausgeschlossen werden sollen |
-| included_domains | list | [] | Liste von Domains, die eingeschlossen werden sollen |
-
-Beispiel-Konfiguration:
 ```yaml
 type: 'custom:ha-search-card'
-title: 'Meine Suche'
-icon: 'mdi:home-search'
+title: 'Entity Search'
+icon: 'mdi:magnify'
 excluded_entities:
   - sensor.excluded_sensor
 included_domains:
   - light
   - switch
+show_room_tags: true
+show_type_tags: true
 ```
 
-## Entwicklung
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| title | string | 'Entity Search' | Card title |
+| icon | string | 'mdi:magnify' | Search icon |
+| excluded_entities | list | [] | Entities to exclude from search |
+| included_domains | list | [] | Only include these domains |
+| show_room_tags | boolean | true | Show room tags on entity cards |
+| show_type_tags | boolean | true | Show entity type tags |
+
+## Development
 
 ### Setup
 
-1. Klonen Sie das Repository
+1. Clone the repository
 ```bash
 git clone https://github.com/fastender/ha-search-card
 cd ha-search-card
 ```
 
-2. Installieren Sie die Abhängigkeiten
+2. Install dependencies
 ```bash
 npm install
 ```
 
-3. Starten Sie den Entwicklungsserver
+3. Start development server
 ```bash
 npm start
 ```
@@ -97,15 +97,52 @@ npm start
 npm run build
 ```
 
-## Lizenz
+### Contributing
 
-MIT License - siehe [LICENSE](LICENSE) Datei
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
 
-## Unterstützung
+## Support
 
-- [Issues auf GitHub](https://github.com/fastender/ha-search-card/issues)
+- [Report an issue](https://github.com/fastender/ha-search-card/issues)
 - [Home Assistant Community Forum](https://community.home-assistant.io/)
 
-## Mitwirken
+## License
 
-Beiträge sind willkommen! Bitte lesen Sie [CONTRIBUTING.md](CONTRIBUTING.md) für Details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Thanks to the Home Assistant community for feedback and contributions
+- Inspired by the need for better entity management in large Home Assistant installations
+
+## Changelog
+
+### [1.0.0] - 2025-02-18
+- Initial release
+- Real-time search functionality
+- Theme integration
+- Responsive design
+
+### [1.0.1] - 2025-02-18
+- Added room tag support
+- Improved search performance
+- Fixed icon rendering issues
+
+## Roadmap
+
+- [ ] Add fuzzy search support
+- [ ] Implement group filtering
+- [ ] Add custom styling options
+- [ ] Support for entity state filtering
+- [ ] Add localization support
+
+## FAQ
+
+**Q: Can I use this card with YAML-configured dashboards?**  
+A: Yes, the card works with both UI and YAML-configured dashboards.
+
+**Q: Does it work with all entity types?**  
+A: Yes, the card supports all Home Assistant entity types and will show appropriate icons for each.
+
+**Q: How can I customize the styling?**  
+A: The card automatically adapts to your Home Assistant theme. Additional styling options will be added in future releases.
