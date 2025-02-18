@@ -1,3 +1,170 @@
+// Fügen Sie diesen Code am Anfang der Klasse HASearchCard hinzu
+class HASearchCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this.searchTerm = "";
+    this.entities = [];
+    this.pageSize = 20;
+    this.currentPage = 0;
+    this.debouncedSearch = this.debounce(this.updateResults.bind(this), 300);
+    // Lade gespeicherte Nutzungsstatistiken
+    this.usageStats = this.loadUsageStats();
+  }
+
+  // Nutzungsstatistiken laden
+  loadUsageStats() {
+    try {
+      const stats = localStorage.getItem('ha-search-card-usage');
+      return stats ? JSON.parse(stats) : {};
+    } catch (e) {
+      console.warn('Could not load usage stats:', e);
+      return {};
+    }
+  }
+
+  // Nutzungsstatistiken speichern
+  saveUsageStats() {
+    try {
+      localStorage.setItem('ha-search-card-usage', JSON.stringify(this.usageStats));
+    } catch (e) {
+      console.warn('Could not save usage stats:', e);
+    }
+  }
+
+  // Nutzung einer Entität tracken
+  trackEntityUsage(entityId) {
+    const now = Date.now();
+    if (!this.usageStats[entityId]) {
+      this.usageStats[entityId] = {
+        count: 0,
+        lastUsed: now,
+        room: this.entities.find(e => e.id === entityId)?.room
+      };
+    }
+    this.usageStats[entityId].count += 1;
+    this.usageStats[entityId].lastUsed = now;
+    this.saveUsageStats();
+  }
+
+  // Score für eine Entität berechnen
+  calculateEntityScore(entity) {
+    const stats = this.usageStats[entity.id] || { count: 0, lastUsed: 0 };
+    const now = Date.now();
+    const daysSinceLastUse = (now - stats.lastUsed) / (1000 * 60 * 60 * 24);
+    
+    // Gewichtung basierend auf verschiedenen Faktoren
+    const usageScore = stats.count * 10;  // Häufigkeit der Nutzung
+    const recencyScore = Math.max(0, 100 - daysSinceLastUse);  // Aktualität
+    const roomMatchScore = this.searchTerm.toLowerCase().includes(entity.room.toLowerCase()) ? 50 : 0;
+    const nameMatchScore = entity.name.toLowerCase().includes(this.searchTerm.toLowerCase()) ? 30 : 0;
+    
+    return usageScore + recencyScore + roomMatchScore + nameMatchScore;
+  }
+
+  // Überschreiben der updateResults Methode
+  updateResults() {
+    if (!this.resultsContainer) return;
+
+    const searchTerms = this.searchTerm.toLowerCase().split(' ');
+    
+    // Erweiterte Filterung mit Multi-Term-Suche
+    const filteredEntities = this.entities.filter(entity => {
+      const searchString = `${entity.name} ${entity.room} ${entity.type} ${entity.id}`.toLowerCase();
+      return searchTerms.every(term => searchString.includes(term));
+    });
+
+    // Sortierung nach Score
+    const scoredEntities = filteredEntities.map(entity => ({
+      ...entity,
+      score: this.calculateEntityScore(entity)
+    })).sort((a, b) => b.score - a.score);
+
+    this.resultsContainer.innerHTML = "";
+
+    if (scoredEntities.length === 0) {
+      this.resultsContainer.innerHTML = `
+        <div style="text-align: center; padding: 16px; color: var(--secondary-text-color);">
+          No results found for "${this.searchTerm}"
+        </div>
+      `;
+      return;
+    }
+
+    // Nur die aktuelle Seite anzeigen
+    const startIndex = this.currentPage * this.pageSize;
+    const endIndex = startIndex + this.pageSize;
+    const entitiesToShow = scoredEntities.slice(startIndex, endIndex);
+
+    entitiesToShow.forEach(entity => {
+      const card = document.createElement("div");
+      card.className = "entity-card";
+      card.dataset.entityId = entity.id;
+      
+      // Zeige häufig verwendete Entitäten mit einem speziellen Indikator
+      const usageInfo = this.usageStats[entity.id];
+      const isFrequentlyUsed = usageInfo && usageInfo.count > 5;
+      
+      card.innerHTML = `
+        <div class="entity-header">
+          <ha-icon icon="${this.getEntityIcon(entity.type, entity.state)}"></ha-icon>
+          <span class="entity-name">
+            ${entity.name}
+            ${isFrequentlyUsed ? '<span class="frequently-used">★</span>' : ''}
+          </span>
+        </div>
+        <div class="entity-state">${entity.state}</div>
+        <div class="tags">
+          <span class="tag">${entity.room}</span>
+          <span class="tag">${entity.type}</span>
+          ${usageInfo ? `<span class="usage-tag">Used ${usageInfo.count}x</span>` : ''}
+        </div>
+      `;
+
+      card.addEventListener("click", () => {
+        this.trackEntityUsage(entity.id);
+        this.handleEntityClick(entity.id);
+      });
+
+      this.resultsContainer.appendChild(card);
+    });
+
+    // "Mehr laden" Button
+    if (endIndex < scoredEntities.length) {
+      const loadMoreButton = document.createElement("button");
+      loadMoreButton.className = "load-more";
+      loadMoreButton.textContent = `Load more (${scoredEntities.length - endIndex} remaining)`;
+      loadMoreButton.addEventListener("click", () => {
+        this.currentPage++;
+        this.updateResults();
+      });
+      this.resultsContainer.appendChild(loadMoreButton);
+    }
+  }
+
+  // Fügen Sie diese CSS-Styles zu Ihren bestehenden Styles hinzu
+  static get styles() {
+    return `
+      ${super.styles}
+      .frequently-used {
+        color: var(--primary-color);
+        margin-left: 4px;
+      }
+      .usage-tag {
+        background: var(--primary-color);
+        opacity: 0.7;
+        color: var(--text-primary-color);
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.8em;
+      }
+    `;
+  }
+}
+
+
+
+
 if(!customElements.get("ha-search-card")) {
   class HASearchCard extends HTMLElement {
     constructor() {
