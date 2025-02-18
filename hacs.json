@@ -1,6 +1,9 @@
 {
   "name": "Home Assistant Search Card",
   "render_readme": true,
-  "filename": "dist/ha-search-card.js",
-  "content_in_root": false
+  "filename": "ha-search-card.js",
+  "content_in_root": false,
+  "homeassistant": "2023.0.0",
+  "hide_default_branch": true,
+  "domains": ["lovelace"]  
 }
