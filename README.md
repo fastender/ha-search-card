@@ -19,7 +19,7 @@ Eine benutzerdefinierte Karte für Home Assistant, die eine Echtzeit-Suchfunktio
 2. Gehen Sie zu "Frontend"
 3. Klicken Sie auf die drei Punkte oben rechts
 4. Wählen Sie "Benutzerdefinierte Repositories"
-5. Fügen Sie diese URL hinzu: `https://github.com/IhrBenutzername/ha-search-card`
+5. Fügen Sie diese URL hinzu: `https://github.com/fastender/ha-search-card`
 6. Wählen Sie Kategorie "Lovelace"
 7. Klicken Sie auf "Hinzufügen"
 8. Installieren Sie die "Home Assistant Search Card"
@@ -77,7 +77,7 @@ included_domains:
 
 1. Klonen Sie das Repository
 ```bash
-git clone https://github.com/IhrBenutzername/ha-search-card
+git clone https://github.com/fastender/ha-search-card
 cd ha-search-card
 ```
 
@@ -103,7 +103,7 @@ MIT License - siehe [LICENSE](LICENSE) Datei
 
 ## Unterstützung
 
-- [Issues auf GitHub](https://github.com/IhrBenutzername/ha-search-card/issues)
+- [Issues auf GitHub](https://github.com/fastender/ha-search-card/issues)
 - [Home Assistant Community Forum](https://community.home-assistant.io/)
 
 ## Mitwirken
