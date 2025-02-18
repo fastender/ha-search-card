@@ -293,7 +293,8 @@ if(!customElements.get("ha-search-card")) {
       const searchInput = document.createElement("input");
       searchInput.type = "text";
       searchInput.className = "search-input";
-      searchInput.placeholder = "Search entities...";
+      searchInput.placeholder = "Suche nach Bereichen oder Geräten...";
+      
       searchInput.addEventListener("input", (e) => {
         this.searchTerm = e.target.value;
         this.currentPage = 0;
@@ -316,18 +317,32 @@ if(!customElements.get("ha-search-card")) {
     loadEntities() {
       if (!this._hass) return;
 
-      // Entitäten nur einmal laden und im Cache speichern
-      if (!this.entities.length) {
-        this.entities = Object.entries(this._hass.states)
-          .map(([entityId, entity]) => ({
-            id: entityId,
-            name: entity.attributes.friendly_name || entityId,
-            state: entity.state,
-            type: entityId.split(".")[0],
-            room: entity.attributes.room || "Unassigned"
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-      }
+      // Filtern der Entitäten nach definierten Bereichen
+      this.entities = Object.entries(this._hass.states)
+        .map(([entityId, entity]) => {
+          // Prüfen ob die Entität einen Bereich hat
+          const areaId = entity.attributes.area_id;
+          const area = areaId ? this._hass.areas?.[areaId] : null;
+          const room = area?.name || entity.attributes.room;
+
+          // Nur Entitäten mit definiertem Bereich zurückgeben
+          if (room) {
+            return {
+              id: entityId,
+              name: entity.attributes.friendly_name || entityId,
+              state: entity.state,
+              type: entityId.split(".")[0],
+              room: room
+            };
+          }
+          return null;
+        })
+        .filter(entity => entity !== null) // Entferne alle Entitäten ohne Bereich
+        .sort((a, b) => {
+          // Erst nach Raum, dann nach Namen sortieren
+          const roomCompare = a.room.localeCompare(b.room);
+          return roomCompare !== 0 ? roomCompare : a.name.localeCompare(b.name);
+        });
 
       this.updateResults();
     }
@@ -350,23 +365,68 @@ if(!customElements.get("ha-search-card")) {
     updateResults() {
       if (!this.resultsContainer) return;
 
-      const filteredEntities = this.entities.filter(entity =>
-        entity.name.toLowerCase().includes(this.searchTerm.toLowerCase()) ||
-        entity.room.toLowerCase().includes(this.searchTerm.toLowerCase()) ||
-        entity.type.toLowerCase().includes(this.searchTerm.toLowerCase()) ||
-        entity.id.toLowerCase().includes(this.searchTerm.toLowerCase())
-      );
+      const searchTerms = this.searchTerm.toLowerCase().split(' ');
+      
+      // Filtern nach Suchbegriffen
+      const filteredEntities = this.entities.filter(entity => {
+        const searchString = `${entity.name} ${entity.room} ${entity.type}`.toLowerCase();
+        return searchTerms.every(term => searchString.includes(term));
+      });
 
       this.resultsContainer.innerHTML = "";
 
       if (filteredEntities.length === 0) {
         this.resultsContainer.innerHTML = `
           <div style="text-align: center; padding: 16px; color: var(--secondary-text-color);">
-            No results found for "${this.searchTerm}"
+            Keine Ergebnisse gefunden für "${this.searchTerm}"
           </div>
         `;
         return;
       }
+
+      // Gruppiere Ergebnisse nach Raum
+      const groupedEntities = filteredEntities.reduce((groups, entity) => {
+        const room = entity.room;
+        if (!groups[room]) {
+          groups[room] = [];
+        }
+        groups[room].push(entity);
+        return groups;
+      }, {});
+
+      // Zeige Ergebnisse gruppiert nach Raum
+      Object.entries(groupedEntities).forEach(([room, entities]) => {
+        const roomHeader = document.createElement("div");
+        roomHeader.className = "room-header";
+        roomHeader.textContent = room;
+        this.resultsContainer.appendChild(roomHeader);
+
+        const roomGrid = document.createElement("div");
+        roomGrid.className = "results-grid";
+
+        entities.forEach(entity => {
+          const card = document.createElement("div");
+          card.className = "entity-card";
+          card.dataset.entityId = entity.id;
+          
+          card.innerHTML = `
+            <div class="entity-header">
+              <ha-icon icon="${this.getEntityIcon(entity.type, entity.state)}"></ha-icon>
+              <span class="entity-name">${entity.name}</span>
+            </div>
+            <div class="entity-state">${entity.state}</div>
+          `;
+
+          card.addEventListener("click", () => {
+            this.handleEntityClick(entity.id);
+          });
+
+          roomGrid.appendChild(card);
+        });
+
+        this.resultsContainer.appendChild(roomGrid);
+      });
+    }
 
       // Nur die aktuelle Seite anzeigen
       const startIndex = this.currentPage * this.pageSize;
