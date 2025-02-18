@@ -1,1 +1,202 @@
-class t extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this.searchTerm="",this.entities=[]}set hass(t){this.hassObj=t,this.initialized||this.init()}init(){this.initialized=!0;const t=document.createElement("ha-card");t.header="Entitäten Suche";const e=document.createElement("div");e.className="card-content";const s=document.createElement("style");s.textContent="\n      .search-container {\n        position: relative;\n        margin-bottom: 16px;\n      }\n      .search-input {\n        width: 100%;\n        padding: 8px 32px 8px 8px;\n        border: 1px solid var(--divider-color, #e0e0e0);\n        border-radius: 4px;\n        background: var(--card-background-color, #fff);\n        color: var(--primary-text-color, #000);\n      }\n      .results-grid {\n        display: grid;\n        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));\n        gap: 16px;\n      }\n      .entity-card {\n        background: var(--card-background-color, #fff);\n        border-radius: 4px;\n        border: 1px solid var(--divider-color, #e0e0e0);\n        padding: 16px;\n        cursor: pointer;\n        transition: box-shadow 0.3s ease;\n      }\n      .entity-card:hover {\n        box-shadow: var(--shadow-elevation-4dp, 0 2px 4px rgba(0,0,0,0.1));\n      }\n      .entity-header {\n        display: flex;\n        align-items: center;\n        margin-bottom: 8px;\n      }\n      .entity-name {\n        margin-left: 8px;\n        font-weight: 500;\n      }\n      .entity-state {\n        color: var(--secondary-text-color, #757575);\n      }\n      .tags {\n        display: flex;\n        flex-wrap: wrap;\n        gap: 4px;\n        margin-top: 8px;\n      }\n      .tag {\n        background: var(--primary-color, #03a9f4);\n        color: var(--text-primary-color, #fff);\n        padding: 2px 8px;\n        border-radius: 12px;\n        font-size: 0.8em;\n      }\n      .no-results {\n        text-align: center;\n        padding: 32px;\n        color: var(--secondary-text-color, #757575);\n      }\n    ",this.shadowRoot.appendChild(s);const n=document.createElement("div");n.className="search-container";const a=document.createElement("input");a.type="text",a.className="search-input",a.placeholder="Suchen Sie nach Räumen, Geräten oder Funktionen...",a.addEventListener("input",t=>{this.searchTerm=t.target.value,this.updateResults()}),n.appendChild(a),this.resultsContainer=document.createElement("div"),this.resultsContainer.className="results-grid",e.appendChild(n),e.appendChild(this.resultsContainer),t.appendChild(e),this.shadowRoot.appendChild(t),this.updateEntities()}updateEntities(){this.entities=Object.entries(this.hassObj.states).map(([t,e])=>({id:t,name:e.attributes.friendly_name||t,state:e.state,type:t.split(".")[0],room:e.attributes.room||"Nicht zugeordnet"})),this.updateResults()}updateResults(){const t=this.entities.filter(t=>t.name.toLowerCase().includes(this.searchTerm.toLowerCase())||t.room.toLowerCase().includes(this.searchTerm.toLowerCase())||t.type.toLowerCase().includes(this.searchTerm.toLowerCase())||t.id.toLowerCase().includes(this.searchTerm.toLowerCase()));this.resultsContainer.innerHTML="",t.length?t.forEach(t=>{const e=document.createElement("div");e.className="entity-card",e.innerHTML=`\n        <div class="entity-header">\n          <ha-icon icon="${this.getEntityIcon(t.type,t.state)}"></ha-icon>\n          <span class="entity-name">${t.name}</span>\n        </div>\n        <div class="entity-state">${t.state}</div>\n        <div class="tags">\n          <span class="tag">${t.room}</span>\n          <span class="tag">${t.type}</span>\n        </div>\n      `,e.addEventListener("click",()=>{this.fireEvent(t.id)}),this.resultsContainer.appendChild(e)}):this.resultsContainer.innerHTML=`\n        <div class="no-results">\n          Keine Ergebnisse gefunden für "${this.searchTerm}"\n        </div>\n      `}getEntityIcon(t,e){const s={light:"on"===e?"mdi:lightbulb":"mdi:lightbulb-outline",switch:"on"===e?"mdi:toggle-switch":"mdi:toggle-switch-off",sensor:"mdi:thermometer",binary_sensor:"mdi:eye",climate:"mdi:thermostat",media_player:"mdi:cast",camera:"mdi:video",cover:"mdi:window-shutter"};return s[t]||"mdi:help-circle"}fireEvent(t){const e=new CustomEvent("hass-more-info",{detail:{entityId:t}});this.dispatchEvent(e)}setConfig(t){}getCardSize(){return 3}}customElements.define("ha-search-card",t);
+if(!customElements.get("ha-search-card")) {
+  class HASearchCard extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" });
+      this.searchTerm = "";
+      this.entities = [];
+    }
+
+    setConfig(config) {
+      this.config = config;
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      if (!this.initialized) {
+        this.initialized = true;
+        this.initializeCard();
+      }
+      this.updateEntities();
+    }
+
+    initializeCard() {
+      const card = document.createElement("ha-card");
+      card.header = "Entity Search";
+
+      const content = document.createElement("div");
+      content.className = "card-content";
+
+      const style = document.createElement("style");
+      style.textContent = `
+        .search-container {
+          position: relative;
+          margin-bottom: 16px;
+        }
+        .search-input {
+          width: 100%;
+          padding: 8px;
+          border: 1px solid var(--divider-color, #e0e0e0);
+          border-radius: 4px;
+          background: var(--card-background-color, #fff);
+          color: var(--primary-text-color, #000);
+        }
+        .results-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+          gap: 16px;
+        }
+        .entity-card {
+          background: var(--card-background-color, #fff);
+          border-radius: 4px;
+          border: 1px solid var(--divider-color, #e0e0e0);
+          padding: 16px;
+          cursor: pointer;
+          transition: box-shadow 0.3s ease;
+        }
+        .entity-card:hover {
+          box-shadow: var(--shadow-elevation-4dp, 0 2px 4px rgba(0,0,0,0.1));
+        }
+        .entity-header {
+          display: flex;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+        .entity-name {
+          margin-left: 8px;
+          font-weight: 500;
+        }
+        .entity-state {
+          color: var(--secondary-text-color, #757575);
+        }
+        .tags {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+          margin-top: 8px;
+        }
+        .tag {
+          background: var(--primary-color, #03a9f4);
+          color: var(--text-primary-color, #fff);
+          padding: 2px 8px;
+          border-radius: 12px;
+          font-size: 0.8em;
+        }
+      `;
+
+      const searchContainer = document.createElement("div");
+      searchContainer.className = "search-container";
+
+      const searchInput = document.createElement("input");
+      searchInput.type = "text";
+      searchInput.className = "search-input";
+      searchInput.placeholder = "Search entities...";
+      searchInput.addEventListener("input", (e) => {
+        this.searchTerm = e.target.value;
+        this.updateResults();
+      });
+
+      searchContainer.appendChild(searchInput);
+
+      this.resultsContainer = document.createElement("div");
+      this.resultsContainer.className = "results-grid";
+
+      content.appendChild(searchContainer);
+      content.appendChild(this.resultsContainer);
+
+      this.shadowRoot.appendChild(style);
+      card.appendChild(content);
+      this.shadowRoot.appendChild(card);
+    }
+
+    updateEntities() {
+      if (!this._hass) return;
+
+      this.entities = Object.entries(this._hass.states).map(([entityId, entity]) => ({
+        id: entityId,
+        name: entity.attributes.friendly_name || entityId,
+        state: entity.state,
+        type: entityId.split(".")[0],
+        room: entity.attributes.room || "Unassigned"
+      }));
+
+      this.updateResults();
+    }
+
+    updateResults() {
+      if (!this.resultsContainer) return;
+
+      const filteredEntities = this.entities.filter(entity =>
+        entity.name.toLowerCase().includes(this.searchTerm.toLowerCase()) ||
+        entity.room.toLowerCase().includes(this.searchTerm.toLowerCase()) ||
+        entity.type.toLowerCase().includes(this.searchTerm.toLowerCase()) ||
+        entity.id.toLowerCase().includes(this.searchTerm.toLowerCase())
+      );
+
+      this.resultsContainer.innerHTML = "";
+
+      if (filteredEntities.length === 0) {
+        this.resultsContainer.innerHTML = `
+          <div style="text-align: center; padding: 16px; color: var(--secondary-text-color);">
+            No results found for "${this.searchTerm}"
+          </div>
+        `;
+        return;
+      }
+
+      filteredEntities.forEach(entity => {
+        const card = document.createElement("div");
+        card.className = "entity-card";
+        
+        card.innerHTML = `
+          <div class="entity-header">
+            <ha-icon icon="${this.getEntityIcon(entity.type, entity.state)}"></ha-icon>
+            <span class="entity-name">${entity.name}</span>
+          </div>
+          <div class="entity-state">${entity.state}</div>
+          <div class="tags">
+            <span class="tag">${entity.room}</span>
+            <span class="tag">${entity.type}</span>
+          </div>
+        `;
+
+        card.addEventListener("click", () => {
+          this.handleEntityClick(entity.id);
+        });
+
+        this.resultsContainer.appendChild(card);
+      });
+    }
+
+    getEntityIcon(type, state) {
+      const iconMap = {
+        light: state === "on" ? "mdi:lightbulb" : "mdi:lightbulb-outline",
+        switch: state === "on" ? "mdi:toggle-switch" : "mdi:toggle-switch-off",
+        sensor: "mdi:thermometer",
+        binary_sensor: "mdi:eye",
+        climate: "mdi:thermostat",
+        media_player: "mdi:cast",
+        camera: "mdi:video",
+        cover: "mdi:window-shutter",
+      };
+
+      return iconMap[type] || "mdi:help-circle";
+    }
+
+    handleEntityClick(entityId) {
+      const event = new CustomEvent("hass-more-info", {
+        detail: { entityId },
+        bubbles: true,
+        composed: true
+      });
+      this.dispatchEvent(event);
+    }
+
+    getCardSize() {
+      return 3;
+    }
+  }
+
+  customElements.define("ha-search-card", HASearchCard);
+  console.info("%c SEARCH-CARD %c Version 1.0.0 ", "color: white; background: blue; font-weight: 700;", "color: blue; background: white; font-weight: 700;");
+}
