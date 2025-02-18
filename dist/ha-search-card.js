@@ -5,19 +5,42 @@ if(!customElements.get("ha-search-card")) {
       this.attachShadow({ mode: "open" });
       this.searchTerm = "";
       this.entities = [];
+      this.pageSize = 20; // Anzahl der Entitäten pro Seite
+      this.currentPage = 0;
+      this.debouncedSearch = this.debounce(this.updateResults.bind(this), 300);
+    }
+
+    // Debounce-Funktion für die Suche
+    debounce(func, wait) {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
     }
 
     setConfig(config) {
-      this.config = config;
+      this.config = {
+        pageSize: 20,
+        ...config
+      };
+      this.pageSize = this.config.pageSize;
     }
 
     set hass(hass) {
-      this._hass = hass;
-      if (!this.initialized) {
-        this.initialized = true;
+      if (!this._hass) {
+        this._hass = hass;
         this.initializeCard();
+        // Lazy Loading der Entitäten
+        requestAnimationFrame(() => this.loadEntities());
+      } else {
+        this._hass = hass;
+        this.updateEntityStates();
       }
-      this.updateEntities();
     }
 
     initializeCard() {
@@ -82,6 +105,19 @@ if(!customElements.get("ha-search-card")) {
           border-radius: 12px;
           font-size: 0.8em;
         }
+        .load-more {
+          width: 100%;
+          padding: 8px;
+          margin-top: 16px;
+          background: var(--primary-color);
+          color: var(--text-primary-color);
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        .load-more:hover {
+          opacity: 0.9;
+        }
       `;
 
       const searchContainer = document.createElement("div");
@@ -93,7 +129,8 @@ if(!customElements.get("ha-search-card")) {
       searchInput.placeholder = "Search entities...";
       searchInput.addEventListener("input", (e) => {
         this.searchTerm = e.target.value;
-        this.updateResults();
+        this.currentPage = 0;
+        this.debouncedSearch();
       });
 
       searchContainer.appendChild(searchInput);
@@ -109,18 +146,38 @@ if(!customElements.get("ha-search-card")) {
       this.shadowRoot.appendChild(card);
     }
 
-    updateEntities() {
+    loadEntities() {
       if (!this._hass) return;
 
-      this.entities = Object.entries(this._hass.states).map(([entityId, entity]) => ({
-        id: entityId,
-        name: entity.attributes.friendly_name || entityId,
-        state: entity.state,
-        type: entityId.split(".")[0],
-        room: entity.attributes.room || "Unassigned"
-      }));
+      // Entitäten nur einmal laden und im Cache speichern
+      if (!this.entities.length) {
+        this.entities = Object.entries(this._hass.states)
+          .map(([entityId, entity]) => ({
+            id: entityId,
+            name: entity.attributes.friendly_name || entityId,
+            state: entity.state,
+            type: entityId.split(".")[0],
+            room: entity.attributes.room || "Unassigned"
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+      }
 
       this.updateResults();
+    }
+
+    updateEntityStates() {
+      // Nur die sichtbaren Entitäten aktualisieren
+      const visibleEntities = this.resultsContainer.querySelectorAll('.entity-card');
+      visibleEntities.forEach(card => {
+        const entityId = card.dataset.entityId;
+        if (entityId && this._hass.states[entityId]) {
+          const entity = this._hass.states[entityId];
+          const stateEl = card.querySelector('.entity-state');
+          if (stateEl) {
+            stateEl.textContent = entity.state;
+          }
+        }
+      });
     }
 
     updateResults() {
@@ -144,9 +201,15 @@ if(!customElements.get("ha-search-card")) {
         return;
       }
 
-      filteredEntities.forEach(entity => {
+      // Nur die aktuelle Seite anzeigen
+      const startIndex = this.currentPage * this.pageSize;
+      const endIndex = startIndex + this.pageSize;
+      const entitiesToShow = filteredEntities.slice(startIndex, endIndex);
+
+      entitiesToShow.forEach(entity => {
         const card = document.createElement("div");
         card.className = "entity-card";
+        card.dataset.entityId = entity.id;
         
         card.innerHTML = `
           <div class="entity-header">
@@ -166,6 +229,18 @@ if(!customElements.get("ha-search-card")) {
 
         this.resultsContainer.appendChild(card);
       });
+
+      // "Mehr laden" Button hinzufügen, wenn es weitere Entitäten gibt
+      if (endIndex < filteredEntities.length) {
+        const loadMoreButton = document.createElement("button");
+        loadMoreButton.className = "load-more";
+        loadMoreButton.textContent = `Load more (${filteredEntities.length - endIndex} remaining)`;
+        loadMoreButton.addEventListener("click", () => {
+          this.currentPage++;
+          this.updateResults();
+        });
+        this.resultsContainer.appendChild(loadMoreButton);
+      }
     }
 
     getEntityIcon(type, state) {
