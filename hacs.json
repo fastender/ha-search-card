@@ -1,0 +1,6 @@
+{
+  "name": "Home Assistant Search Card",
+  "render_readme": true,
+  "filename": "dist/ha-search-card.js",
+  "content_in_root": false
+}
