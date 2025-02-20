@@ -4,8 +4,9 @@ if(!customElements.get("ha-search-card")) {
       super();
       this.attachShadow({ mode: "open" });
       this.searchTerm = "";
-      this.entities = null;  // Lazy loading
-      this.pageSize = 12;    // Reduzierte initiale Anzahl
+      this.entities = null;
+      this.areas = null;
+      this.pageSize = 12;
     }
 
     setConfig(config) {
@@ -54,12 +55,22 @@ if(!customElements.get("ha-search-card")) {
           margin-left: 8px;
           font-weight: 500;
         }
+        .area-header {
+          grid-column: 1/-1;
+          margin-top: 16px;
+          margin-bottom: 8px;
+          padding: 8px;
+          background: var(--primary-color);
+          color: var(--text-primary-color);
+          border-radius: 4px;
+          font-weight: bold;
+        }
       `;
 
       const searchInput = document.createElement("input");
       searchInput.type = "text";
       searchInput.className = "search-input";
-      searchInput.placeholder = "Suchen...";
+      searchInput.placeholder = "Nach Geräten oder Räumen suchen...";
       searchInput.addEventListener("input", (e) => {
         requestAnimationFrame(() => this.handleSearch(e.target.value));
       });
@@ -74,47 +85,159 @@ if(!customElements.get("ha-search-card")) {
       this.shadowRoot.appendChild(card);
     }
 
-    handleSearch(value) {
-      this.searchTerm = value;
-      if (!this.entities) {
-        this.loadEntities();
-      }
-      this.updateResults();
-    }
-
-    loadEntities() {
+    async loadAreas() {
       if (!this._hass) return;
       
-      // Nur die wichtigsten Entitätstypen initial laden
-      const priorityTypes = ['light', 'switch', 'climate', 'cover'];
-      
-      this.entities = Object.entries(this._hass.states)
-        .filter(([id]) => priorityTypes.some(type => id.startsWith(type + '.')))
-        .map(([id, entity]) => ({
-          id,
-          name: entity.attributes.friendly_name || id,
-          type: id.split('.')[0],
-          state: entity.state
+      try {
+        // Laden der Areas über die Home Assistant API
+        const areaRegistry = await this._hass.callWS({
+          type: "config/area_registry/list"
+        });
+        
+        this.areas = areaRegistry.map(area => ({
+          id: area.area_id,
+          name: area.name
         }));
+      } catch (error) {
+        console.error("Fehler beim Laden der Areas:", error);
+        this.areas = [];
+      }
+    }
+
+    async loadEntities() {
+      if (!this._hass) return;
+      
+      if (!this.areas) {
+        await this.loadAreas();
+      }
+      
+      // Laden der Device Registry
+      const deviceRegistry = await this._hass.callWS({
+        type: "config/device_registry/list"
+      });
+      
+      // Laden der Entity Registry
+      const entityRegistry = await this._hass.callWS({
+        type: "config/entity_registry/list"
+      });
+      
+      // Mapping von Devices zu Areas
+      const deviceAreaMap = {};
+      deviceRegistry.forEach(device => {
+        if (device.area_id) {
+          deviceAreaMap[device.id] = device.area_id;
+        }
+      });
+      
+      // Erstellen der erweiterten Entitätsliste
+      this.entities = Object.entries(this._hass.states)
+        .map(([id, entity]) => {
+          // Finden des Entity Registry Eintrags
+          const registryEntry = entityRegistry.find(e => e.entity_id === id);
+          let areaId = null;
+          
+          if (registryEntry) {
+            // Direkte Area ID der Entity
+            areaId = registryEntry.area_id;
+            
+            // Wenn keine direkte Area ID, prüfe Device
+            if (!areaId && registryEntry.device_id) {
+              areaId = deviceAreaMap[registryEntry.device_id];
+            }
+          }
+          
+          return {
+            id,
+            name: entity.attributes.friendly_name || id,
+            type: id.split('.')[0],
+            state: entity.state,
+            areaId,
+            areaName: areaId ? this.areas.find(a => a.id === areaId)?.name : null
+          };
+        });
+    }
+
+    async handleSearch(value) {
+      this.searchTerm = value;
+      if (!this.entities) {
+        await this.loadEntities();
+      }
+      this.updateResults();
     }
 
     updateResults() {
       if (!this.resultsContainer || !this.entities) return;
       
-      const results = this.searchTerm ? 
-        this.entities.filter(entity => 
-          entity.name.toLowerCase().includes(this.searchTerm.toLowerCase()) ||
-          entity.id.toLowerCase().includes(this.searchTerm.toLowerCase())
-        ) : 
-        this.entities.slice(0, this.pageSize);
+      let results = [];
+      const searchTermLower = this.searchTerm.toLowerCase();
+      
+      if (this.searchTerm) {
+        // Suche nach Areas
+        const matchingAreas = this.areas.filter(area => 
+          area.name.toLowerCase().includes(searchTermLower)
+        );
+        
+        // Gruppiere Entitäten nach gefundenen Areas
+        matchingAreas.forEach(area => {
+          const areaEntities = this.entities.filter(entity => 
+            entity.areaId === area.id
+          );
+          
+          if (areaEntities.length > 0) {
+            results.push({
+              type: 'area-header',
+              content: area.name
+            });
+            results.push(...areaEntities.map(entity => ({
+              type: 'entity',
+              content: entity
+            })));
+          }
+        });
+        
+        // Suche nach einzelnen Entitäten
+        const matchingEntities = this.entities.filter(entity =>
+          !results.some(r => r.type === 'entity' && r.content.id === entity.id) && // Vermeiden von Duplikaten
+          (entity.name.toLowerCase().includes(searchTermLower) ||
+           entity.id.toLowerCase().includes(searchTermLower))
+        );
+        
+        if (matchingEntities.length > 0) {
+          if (results.length > 0) {
+            results.push({
+              type: 'area-header',
+              content: 'Weitere Ergebnisse'
+            });
+          }
+          results.push(...matchingEntities.map(entity => ({
+            type: 'entity',
+            content: entity
+          })));
+        }
+      } else {
+        // Zeige die ersten pageSize Entitäten ohne Suche
+        results = this.entities
+          .slice(0, this.pageSize)
+          .map(entity => ({
+            type: 'entity',
+            content: entity
+          }));
+      }
 
       this.resultsContainer.innerHTML = results.length ? 
-        results.slice(0, this.pageSize).map(entity => `
-          <div class="entity-card" @click="${() => this.handleEntityClick(entity.id)}">
-            <ha-icon icon="${this.getIcon(entity)}"></ha-icon>
-            <span class="entity-name">${entity.name}</span>
-          </div>
-        `).join('') :
+        results.map(result => {
+          if (result.type === 'area-header') {
+            return `<div class="area-header">${result.content}</div>`;
+          } else {
+            const entity = result.content;
+            return `
+              <div class="entity-card" @click="${() => this.handleEntityClick(entity.id)}">
+                <ha-icon icon="${this.getIcon(entity)}"></ha-icon>
+                <span class="entity-name">${entity.name}</span>
+              </div>
+            `;
+          }
+        }).join('') :
         '<div style="grid-column: 1/-1; text-align: center; padding: 16px;">Keine Ergebnisse</div>';
 
       // Event-Listener hinzufügen
