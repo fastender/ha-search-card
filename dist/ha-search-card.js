@@ -3,9 +3,10 @@ if(!customElements.get("ha-search-card")) {
     constructor() {
       super();
       this.attachShadow({ mode: "open" });
-      this.searchTerm = "";
+      this.searchTerm = ""; // Initialisierung im Constructor
       this.entities = null;
       this.pageSize = 12;
+      this._initialized = false;
     }
 
     setConfig(config) {
@@ -16,11 +17,11 @@ if(!customElements.get("ha-search-card")) {
       const firstSet = !this._hass;
       this._hass = hass;
       
-      if (firstSet) {
+      if (!this._initialized) {
+        this._initialized = true;
         this.initializeCard();
         this.loadData();
       } else if (this.entities) {
-        // Nur Status-Updates durchführen
         this.updateEntityStates();
       }
     }
@@ -54,10 +55,6 @@ if(!customElements.get("ha-search-card")) {
           display: flex;
           align-items: center;
         }
-        .entity-card:hover {
-          background: var(--primary-color);
-          color: var(--text-primary-color);
-        }
         .entity-name {
           margin-left: 8px;
           overflow: hidden;
@@ -80,14 +77,9 @@ if(!customElements.get("ha-search-card")) {
       searchInput.className = "search-input";
       searchInput.placeholder = "Nach Geräten oder Räumen suchen...";
       
-      // Debounce für die Suche
-      let searchTimeout;
       searchInput.addEventListener("input", (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-          this.searchTerm = e.target.value;
-          this.updateResults();
-        }, 150);
+        this.searchTerm = e.target.value || ""; // Stelle sicher, dass searchTerm nie undefined ist
+        this.updateResults();
       });
 
       this.resultsContainer = document.createElement("div");
@@ -101,43 +93,37 @@ if(!customElements.get("ha-search-card")) {
     }
 
     async loadData() {
+      if (!this._hass) return;
+
       try {
-        const entityIds = Object.keys(this._hass.states);
-        const areaReg = await this._hass.callWS({ type: "config/area_registry/list" });
-        const deviceReg = await this._hass.callWS({ type: "config/device_registry/list" });
-        const entityReg = await this._hass.callWS({ type: "config/entity_registry/list" });
+        const [areaReg, deviceReg, entityReg] = await Promise.all([
+          this._hass.callWS({ type: "config/area_registry/list" }),
+          this._hass.callWS({ type: "config/device_registry/list" }),
+          this._hass.callWS({ type: "config/entity_registry/list" })
+        ]);
 
-        // Erstelle Lookup-Maps für schnelleren Zugriff
-        const deviceAreaMap = {};
-        deviceReg.forEach(device => {
-          if (device.area_id) {
-            deviceAreaMap[device.id] = device.area_id;
-          }
-        });
+        // Erstelle Maps für schnellen Zugriff
+        const deviceAreaMap = new Map(
+          deviceReg.map(device => [device.id, device.area_id])
+        );
 
-        const entityInfoMap = {};
-        entityReg.forEach(entity => {
-          entityInfoMap[entity.entity_id] = {
-            areaId: entity.area_id || (entity.device_id ? deviceAreaMap[entity.device_id] : null)
-          };
-        });
+        const areaMap = new Map(
+          areaReg.map(area => [area.area_id, area.name])
+        );
 
-        const areaMap = {};
-        areaReg.forEach(area => {
-          areaMap[area.area_id] = area.name;
-        });
-
-        // Einmalige Transformation der Entities
-        this.entities = entityIds.map(id => {
-          const state = this._hass.states[id];
-          const info = entityInfoMap[id] || {};
+        // Verarbeite Entities
+        this.entities = Object.entries(this._hass.states).map(([id, state]) => {
+          const entityEntry = entityReg.find(e => e.entity_id === id);
+          const areaId = entityEntry?.area_id || 
+                        (entityEntry?.device_id ? deviceAreaMap.get(entityEntry.device_id) : null);
+          
           return {
             id,
             name: state.attributes.friendly_name || id,
             type: id.split('.')[0],
             state: state.state,
-            areaId: info.areaId,
-            areaName: info.areaId ? areaMap[info.areaId] : null
+            areaId,
+            areaName: areaId ? areaMap.get(areaId) : null
           };
         });
 
@@ -167,12 +153,12 @@ if(!customElements.get("ha-search-card")) {
     updateResults() {
       if (!this.resultsContainer || !this.entities) return;
 
-      const searchTerm = this.searchTerm.toLowerCase();
+      const searchTerm = (this.searchTerm || "").toLowerCase();
       let results = [];
 
       if (searchTerm) {
         // Gruppiere nach Areas
-        const areaGroups = {};
+        const areaGroups = new Map();
         const unassigned = [];
 
         this.entities.forEach(entity => {
@@ -181,8 +167,10 @@ if(!customElements.get("ha-search-card")) {
               (entity.areaName && entity.areaName.toLowerCase().includes(searchTerm))) {
             
             if (entity.areaName) {
-              areaGroups[entity.areaName] = areaGroups[entity.areaName] || [];
-              areaGroups[entity.areaName].push(entity);
+              if (!areaGroups.has(entity.areaName)) {
+                areaGroups.set(entity.areaName, []);
+              }
+              areaGroups.get(entity.areaName).push(entity);
             } else {
               unassigned.push(entity);
             }
@@ -190,10 +178,10 @@ if(!customElements.get("ha-search-card")) {
         });
 
         // Füge gruppierte Ergebnisse hinzu
-        Object.entries(areaGroups).forEach(([areaName, entities]) => {
+        for (const [areaName, entities] of areaGroups) {
           results.push({ type: 'header', content: areaName });
           results.push(...entities.map(e => ({ type: 'entity', content: e })));
-        });
+        }
 
         // Füge nicht zugewiesene Entities hinzu
         if (unassigned.length) {
@@ -203,12 +191,13 @@ if(!customElements.get("ha-search-card")) {
           results.push(...unassigned.map(e => ({ type: 'entity', content: e })));
         }
       } else {
-        // Zeige initial nur die ersten pageSize Entities
+        // Zeige die ersten pageSize Entities
         results = this.entities
           .slice(0, this.pageSize)
           .map(e => ({ type: 'entity', content: e }));
       }
 
+      // Generiere HTML
       const html = results.length ? 
         results.map(result => {
           if (result.type === 'header') {
@@ -224,16 +213,14 @@ if(!customElements.get("ha-search-card")) {
         }).join('') :
         '<div style="grid-column: 1/-1; text-align: center; padding: 16px;">Keine Ergebnisse gefunden</div>';
 
-      // Effizientes DOM-Update
+      // Update DOM
       if (this.resultsContainer.innerHTML !== html) {
         this.resultsContainer.innerHTML = html;
         
-        // Event-Listener nur einmal hinzufügen
         this.resultsContainer.querySelectorAll('.entity-card').forEach(card => {
           card.addEventListener('click', () => {
-            const entityId = card.dataset.entityId;
             this.dispatchEvent(new CustomEvent("hass-more-info", {
-              detail: { entityId },
+              detail: { entityId: card.dataset.entityId },
               bubbles: true,
               composed: true
             }));
