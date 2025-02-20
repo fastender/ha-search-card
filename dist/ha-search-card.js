@@ -15,6 +15,9 @@ if(!customElements.get("ha-search-card")) {
 
     set hass(hass) {
       this._hass = hass;
+      // Debug-Ausgabe
+      console.log("HASS wurde gesetzt:", !!this._hass);
+      
       if (!this.initialized) {
         this.initialized = true;
         this.initializeCard();
@@ -48,17 +51,8 @@ if(!customElements.get("ha-search-card")) {
           padding: 12px;
           cursor: pointer;
         }
-        .entity-card:hover {
-          border-color: var(--primary-color);
-        }
-        .entity-name {
-          margin-left: 8px;
-          font-weight: 500;
-        }
         .area-header {
           grid-column: 1/-1;
-          margin-top: 16px;
-          margin-bottom: 8px;
           padding: 8px;
           background: var(--primary-color);
           color: var(--text-primary-color);
@@ -72,7 +66,9 @@ if(!customElements.get("ha-search-card")) {
       searchInput.className = "search-input";
       searchInput.placeholder = "Nach Geräten oder Räumen suchen...";
       searchInput.addEventListener("input", (e) => {
-        requestAnimationFrame(() => this.handleSearch(e.target.value));
+        // Debug-Ausgabe
+        console.log("Suche nach:", e.target.value);
+        this.handleSearch(e.target.value);
       });
 
       this.resultsContainer = document.createElement("div");
@@ -83,167 +79,130 @@ if(!customElements.get("ha-search-card")) {
       this.shadowRoot.appendChild(style);
       card.appendChild(content);
       this.shadowRoot.appendChild(card);
-    }
 
-    async loadAreas() {
-      if (!this._hass) return;
-      
-      try {
-        // Laden der Areas über die Home Assistant API
-        const areaRegistry = await this._hass.callWS({
-          type: "config/area_registry/list"
-        });
-        
-        this.areas = areaRegistry.map(area => ({
-          id: area.area_id,
-          name: area.name
-        }));
-      } catch (error) {
-        console.error("Fehler beim Laden der Areas:", error);
-        this.areas = [];
-      }
+      // Initial alle Entities laden
+      this.loadEntities();
     }
 
     async loadEntities() {
-      if (!this._hass) return;
-      
-      if (!this.areas) {
-        await this.loadAreas();
+      if (!this._hass) {
+        console.log("HASS ist nicht verfügbar!");
+        return;
       }
-      
-      // Laden der Device Registry
-      const deviceRegistry = await this._hass.callWS({
-        type: "config/device_registry/list"
-      });
-      
-      // Laden der Entity Registry
-      const entityRegistry = await this._hass.callWS({
-        type: "config/entity_registry/list"
-      });
-      
-      // Mapping von Devices zu Areas
-      const deviceAreaMap = {};
-      deviceRegistry.forEach(device => {
-        if (device.area_id) {
-          deviceAreaMap[device.id] = device.area_id;
-        }
-      });
-      
-      // Erstellen der erweiterten Entitätsliste
-      this.entities = Object.entries(this._hass.states)
-        .map(([id, entity]) => {
-          // Finden des Entity Registry Eintrags
-          const registryEntry = entityRegistry.find(e => e.entity_id === id);
-          let areaId = null;
-          
-          if (registryEntry) {
-            // Direkte Area ID der Entity
-            areaId = registryEntry.area_id;
-            
-            // Wenn keine direkte Area ID, prüfe Device
-            if (!areaId && registryEntry.device_id) {
-              areaId = deviceAreaMap[registryEntry.device_id];
-            }
-          }
-          
+
+      try {
+        // Debug: Verfügbare Entities ausgeben
+        console.log("Verfügbare States:", Object.keys(this._hass.states));
+
+        // Zuerst Areas laden
+        const areas = await this._hass.callWS({
+          type: "config/area_registry/list"
+        });
+        console.log("Geladene Areas:", areas);
+        this.areas = areas;
+
+        // Entities mit Area-Informationen laden
+        const entities = Object.entries(this._hass.states).map(([id, state]) => {
+          const areaId = this.findAreaForEntity(id);
           return {
             id,
-            name: entity.attributes.friendly_name || id,
+            name: state.attributes.friendly_name || id,
             type: id.split('.')[0],
-            state: entity.state,
+            state: state.state,
             areaId,
-            areaName: areaId ? this.areas.find(a => a.id === areaId)?.name : null
+            areaName: areaId ? this.areas.find(a => a.area_id === areaId)?.name : null
           };
         });
+
+        this.entities = entities;
+        console.log("Geladene Entities:", this.entities);
+        
+        // Initial Ergebnisse anzeigen
+        this.updateResults();
+      } catch (error) {
+        console.error("Fehler beim Laden der Daten:", error);
+      }
     }
 
-    async handleSearch(value) {
+    findAreaForEntity(entityId) {
+      // Vereinfachte Version - später erweitern
+      return null;
+    }
+
+    handleSearch(value) {
       this.searchTerm = value;
-      if (!this.entities) {
-        await this.loadEntities();
-      }
       this.updateResults();
     }
 
     updateResults() {
-      if (!this.resultsContainer || !this.entities) return;
-      
-      let results = [];
-      const searchTermLower = this.searchTerm.toLowerCase();
-      
-      if (this.searchTerm) {
-        // Suche nach Areas
-        const matchingAreas = this.areas.filter(area => 
-          area.name.toLowerCase().includes(searchTermLower)
-        );
-        
-        // Gruppiere Entitäten nach gefundenen Areas
-        matchingAreas.forEach(area => {
-          const areaEntities = this.entities.filter(entity => 
-            entity.areaId === area.id
-          );
-          
-          if (areaEntities.length > 0) {
-            results.push({
-              type: 'area-header',
-              content: area.name
-            });
-            results.push(...areaEntities.map(entity => ({
-              type: 'entity',
-              content: entity
-            })));
-          }
-        });
-        
-        // Suche nach einzelnen Entitäten
-        const matchingEntities = this.entities.filter(entity =>
-          !results.some(r => r.type === 'entity' && r.content.id === entity.id) && // Vermeiden von Duplikaten
-          (entity.name.toLowerCase().includes(searchTermLower) ||
-           entity.id.toLowerCase().includes(searchTermLower))
-        );
-        
-        if (matchingEntities.length > 0) {
-          if (results.length > 0) {
-            results.push({
-              type: 'area-header',
-              content: 'Weitere Ergebnisse'
-            });
-          }
-          results.push(...matchingEntities.map(entity => ({
-            type: 'entity',
-            content: entity
-          })));
-        }
-      } else {
-        // Zeige die ersten pageSize Entitäten ohne Suche
-        results = this.entities
-          .slice(0, this.pageSize)
-          .map(entity => ({
-            type: 'entity',
-            content: entity
-          }));
+      if (!this.resultsContainer || !this.entities) {
+        console.log("Container oder Entities nicht verfügbar");
+        return;
       }
 
+      const searchTerm = this.searchTerm.toLowerCase();
+      let results = [];
+
+      // Nach Areas und Entities filtern
+      if (searchTerm) {
+        // Areas durchsuchen
+        const matchingAreas = this.areas?.filter(area => 
+          area.name.toLowerCase().includes(searchTerm)
+        ) || [];
+
+        // Für jede gefundene Area die zugehörigen Entities anzeigen
+        matchingAreas.forEach(area => {
+          const areaEntities = this.entities.filter(e => e.areaId === area.area_id);
+          if (areaEntities.length) {
+            results.push({ type: 'header', content: area.name });
+            results.push(...areaEntities.map(e => ({ type: 'entity', content: e })));
+          }
+        });
+
+        // Auch nach Entities suchen
+        const matchingEntities = this.entities.filter(entity =>
+          entity.name.toLowerCase().includes(searchTerm) ||
+          entity.id.toLowerCase().includes(searchTerm)
+        );
+        
+        if (matchingEntities.length) {
+          if (results.length) {
+            results.push({ type: 'header', content: 'Weitere Ergebnisse' });
+          }
+          results.push(...matchingEntities.map(e => ({ type: 'entity', content: e })));
+        }
+      } else {
+        // Ohne Suchbegriff die ersten pageSize Entities anzeigen
+        results = this.entities
+          .slice(0, this.pageSize)
+          .map(e => ({ type: 'entity', content: e }));
+      }
+
+      // Debug-Ausgabe
+      console.log("Gefundene Ergebnisse:", results);
+
+      // Ergebnisse anzeigen
       this.resultsContainer.innerHTML = results.length ? 
         results.map(result => {
-          if (result.type === 'area-header') {
+          if (result.type === 'header') {
             return `<div class="area-header">${result.content}</div>`;
-          } else {
-            const entity = result.content;
-            return `
-              <div class="entity-card" @click="${() => this.handleEntityClick(entity.id)}">
-                <ha-icon icon="${this.getIcon(entity)}"></ha-icon>
-                <span class="entity-name">${entity.name}</span>
-              </div>
-            `;
           }
+          const entity = result.content;
+          return `
+            <div class="entity-card" data-entity-id="${entity.id}">
+              <ha-icon icon="${this.getIcon(entity)}"></ha-icon>
+              <span class="entity-name">${entity.name}</span>
+            </div>
+          `;
         }).join('') :
-        '<div style="grid-column: 1/-1; text-align: center; padding: 16px;">Keine Ergebnisse</div>';
+        '<div style="grid-column: 1/-1; text-align: center; padding: 16px;">Keine Ergebnisse gefunden</div>';
 
-      // Event-Listener hinzufügen
+      // Click-Handler hinzufügen
       this.resultsContainer.querySelectorAll('.entity-card').forEach(card => {
-        const entityId = card.getAttribute('@click').match(/'([^']+)'/)[1];
-        card.addEventListener('click', () => this.handleEntityClick(entityId));
+        card.addEventListener('click', () => {
+          const entityId = card.dataset.entityId;
+          this.handleEntityClick(entityId);
+        });
       });
     }
 
@@ -258,6 +217,9 @@ if(!customElements.get("ha-search-card")) {
     }
 
     handleEntityClick(entityId) {
+      // Debug-Ausgabe
+      console.log("Entity geklickt:", entityId);
+      
       this.dispatchEvent(new CustomEvent("hass-more-info", {
         detail: { entityId },
         bubbles: true,
