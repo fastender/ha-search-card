@@ -4,18 +4,41 @@ class HASearchCard extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this.entities = [];
     this.filteredEntities = [];
-    this.areas = [];
+    this.areas = {};
     this.debounceTimeout = null;
-    this.initialized = false;
+    this._hass = null;
+  }
+
+  set hass(hass) {
+    // Store hass object for future use
+    this._hass = hass;
+    
+    // Only load data once
+    if (!this.entities.length) {
+      this.loadData();
+    } else {
+      // Update entity states if we already have entities
+      this.updateEntityStates();
+      // Re-render if we have filtered results showing
+      if (this.filteredEntities.length > 0) {
+        this.render();
+      }
+    }
   }
 
   setConfig(config) {
+    if (!config) {
+      throw new Error("Invalid configuration");
+    }
+    
     this.config = {
       title: 'Entity Search',
       icon: 'mdi:magnify',
       max_results: 10,
       ...config
     };
+    
+    this.render();
   }
 
   static getStubConfig() {
@@ -25,54 +48,82 @@ class HASearchCard extends HTMLElement {
       max_results: 10
     };
   }
-
-  async connectedCallback() {
-    if (this.initialized) return;
-    this.initialized = true;
-
-    const hass = document.querySelector('home-assistant').hass;
+  
+  async loadData() {
+    if (!this._hass) return;
     
     // Initial render with loading state
-    this.render(hass, true);
+    this.render(true);
     
-    // Get all entities and areas in Home Assistant
-    await this.updateEntitiesAndAreas(hass);
-    
-    // Render with actual content
-    this.render(hass);
-    
-    // Set up mutation observer to watch for Home Assistant data changes
-    this.setupDataUpdateObserver();
-  }
-
-  async updateEntitiesAndAreas(hass) {
-    if (!hass) return;
-
     try {
-      // Get all areas
-      const areaRegistry = await hass.callWS({ type: 'config/area_registry/list' });
-      this.areas = areaRegistry;
+      // Get all areas first
+      const areaRegistry = await this._hass.callWS({ type: 'config/area_registry/list' });
       
-      // Get entity registry
-      const entityRegistry = await hass.callWS({ type: 'config/entity_registry/list' });
+      // Create a lookup map for areas
+      areaRegistry.forEach(area => {
+        this.areas[area.area_id] = area.name;
+      });
       
-      // Filter entities to only include those assigned to an area
-      this.entities = entityRegistry
-        .filter(entity => entity.area_id !== null)
-        .map(entity => {
-          const stateObj = hass.states[entity.entity_id];
-          const area = this.areas.find(area => area.area_id === entity.area_id);
+      // Get device registry to map devices to areas
+      const deviceRegistry = await this._hass.callWS({ type: 'config/device_registry/list' });
+      
+      // Create a lookup for devices with their area_ids
+      const deviceAreas = {};
+      deviceRegistry.forEach(device => {
+        if (device.area_id) {
+          deviceAreas[device.id] = device.area_id;
+        }
+      });
+      
+      // Get entity registry 
+      const entityRegistry = await this._hass.callWS({ type: 'config/entity_registry/list' });
+      
+      // Process all entities
+      this.entities = [];
+      
+      // First collect all entities that have a direct area assignment
+      const entitiesWithDirectArea = [];
+      entityRegistry.forEach(entity => {
+        if (entity.area_id) {
+          entitiesWithDirectArea.push(entity.entity_id);
           
-          return {
+          const stateObj = this._hass.states[entity.entity_id];
+          if (!stateObj) return; // Skip if no state object
+          
+          this.entities.push({
             entity_id: entity.entity_id,
-            name: entity.name || (stateObj ? stateObj.attributes.friendly_name : entity.entity_id),
-            state: stateObj ? stateObj.state : 'unavailable',
-            icon: stateObj ? stateObj.attributes.icon : null,
-            area: area ? area.name : 'Unknown',
+            name: entity.name || stateObj.attributes.friendly_name || entity.entity_id,
+            state: stateObj.state,
+            icon: stateObj.attributes.icon,
+            area: this.areas[entity.area_id] || 'Unknown',
             area_id: entity.area_id,
             domain: entity.entity_id.split('.')[0]
-          };
-        });
+          });
+        }
+      });
+      
+      // Now check entities without direct area but with device_id
+      entityRegistry.forEach(entity => {
+        // Skip if already processed (has direct area)
+        if (entitiesWithDirectArea.includes(entity.entity_id)) return;
+        
+        // Check if entity has a device_id with an area
+        if (entity.device_id && deviceAreas[entity.device_id]) {
+          const areaId = deviceAreas[entity.device_id];
+          const stateObj = this._hass.states[entity.entity_id];
+          if (!stateObj) return; // Skip if no state object
+          
+          this.entities.push({
+            entity_id: entity.entity_id,
+            name: entity.name || stateObj.attributes.friendly_name || entity.entity_id,
+            state: stateObj.state,
+            icon: stateObj.attributes.icon,
+            area: this.areas[areaId] || 'Unknown',
+            area_id: areaId,
+            domain: entity.entity_id.split('.')[0]
+          });
+        }
+      });
       
       // Sort entities by area name, then by entity name
       this.entities.sort((a, b) => {
@@ -83,44 +134,36 @@ class HASearchCard extends HTMLElement {
         return 0;
       });
       
+      console.log(`[ha-search-card] Loaded ${this.entities.length} entities with area assignments`);
+      
       // Set initial filtered entities to empty
       this.filteredEntities = [];
+      
+      // Render the card with data
+      this.render();
     } catch (error) {
-      console.error('Error fetching Home Assistant data:', error);
+      console.error('[ha-search-card] Error loading data:', error);
+      this.render();
     }
   }
   
-  setupDataUpdateObserver() {
-    // Create a MutationObserver to detect when Home Assistant data changes
-    const hassElement = document.querySelector('home-assistant');
-    if (!hassElement) return;
+  updateEntityStates() {
+    if (!this._hass || !this.entities.length) return;
     
-    const observer = new MutationObserver(() => {
-      const hass = hassElement.hass;
-      if (hass && this.entities.length > 0) {
-        // Update entity states
-        this.entities.forEach(entity => {
-          const stateObj = hass.states[entity.entity_id];
-          if (stateObj) {
-            entity.state = stateObj.state;
-            entity.icon = stateObj.attributes.icon;
-          }
-        });
-        
-        // Re-render if we have filtered results
-        if (this.filteredEntities.length > 0) {
-          this.render(hass);
-        }
+    // Update entity states with the latest data
+    this.entities.forEach(entity => {
+      const stateObj = this._hass.states[entity.entity_id];
+      if (stateObj) {
+        entity.state = stateObj.state;
+        entity.icon = stateObj.attributes.icon;
       }
     });
-    
-    observer.observe(hassElement, { attributes: true });
   }
 
-  search(query, hass) {
+  search(query) {
     if (!query) {
       this.filteredEntities = [];
-      this.render(hass);
+      this.render();
       return;
     }
     
@@ -130,8 +173,8 @@ class HASearchCard extends HTMLElement {
       // Check if all search terms are found in entity_id, name, area, or domain
       return searchTerms.every(term => 
         entity.entity_id.toLowerCase().includes(term) ||
-        entity.name.toLowerCase().includes(term) ||
-        entity.area.toLowerCase().includes(term) ||
+        (entity.name && entity.name.toLowerCase().includes(term)) ||
+        (entity.area && entity.area.toLowerCase().includes(term)) ||
         entity.domain.toLowerCase().includes(term)
       );
     });
@@ -139,20 +182,20 @@ class HASearchCard extends HTMLElement {
     // Limit results
     this.filteredEntities = this.filteredEntities.slice(0, this.config.max_results);
     
-    this.render(hass);
+    this.render();
   }
 
-  handleSearchInput(e, hass) {
+  handleSearchInput(e) {
     const query = e.target.value;
     
     // Debounce search to avoid excessive rendering
     clearTimeout(this.debounceTimeout);
     this.debounceTimeout = setTimeout(() => {
-      this.search(query, hass);
+      this.search(query);
     }, 150);
   }
 
-  handleEntityClick(entityId, hass) {
+  handleEntityClick(entityId) {
     // Show more-info dialog for the entity
     const event = new CustomEvent('hass-more-info', {
       detail: { entityId },
@@ -162,8 +205,8 @@ class HASearchCard extends HTMLElement {
     this.dispatchEvent(event);
   }
 
-  render(hass, isLoading = false) {
-    if (!hass) return;
+  render(isLoading = false) {
+    if (!this.config) return;
 
     const styles = `
       :host {
@@ -283,11 +326,20 @@ class HASearchCard extends HTMLElement {
         font-size: 12px;
       }
       
-      .no-results, .loading {
-        padding: 20px 0;
+      .no-results, .loading, .stats {
+        padding: 10px 0;
         text-align: center;
         color: var(--secondary-text-color);
         font-style: italic;
+      }
+      
+      .debug-info {
+        margin-top: 16px;
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 4px;
+        font-size: 12px;
+        color: var(--primary-text-color);
       }
       
       @media (max-width: 600px) {
@@ -318,6 +370,13 @@ class HASearchCard extends HTMLElement {
       }
     `;
     
+    const debugInfo = `
+      <div class="debug-info">
+        <div>Entities mit Bereichen: ${this.entities.length}</div>
+        <div>Bereiche: ${Object.keys(this.areas).length}</div>
+      </div>
+    `;
+    
     const htmlContent = `
       <ha-card>
         <div class="card-content">
@@ -332,15 +391,21 @@ class HASearchCard extends HTMLElement {
               type="text"
               class="search-input"
               placeholder="Suche nach Entities..."
-              @input="${e => this.handleSearchInput(e, hass)}"
+              @input="${e => this.handleSearchInput(e)}"
             >
           </div>
           
           <div class="results">
             ${isLoading ? `
               <div class="loading">Daten werden geladen...</div>
-            ` : this.renderResults(hass)}
+            ` : this.renderResults()}
           </div>
+          
+          <div class="stats">
+            ${this.entities.length ? `${this.entities.length} Entities in ${Object.keys(this.areas).length} Bereichen geladen` : 'Keine Entities mit Bereichen gefunden'}
+          </div>
+          
+          ${this.entities.length === 0 ? debugInfo : ''}
         </div>
       </ha-card>
     `;
@@ -355,12 +420,12 @@ class HASearchCard extends HTMLElement {
     if (!isLoading) {
       this.shadowRoot.querySelectorAll('.result-item').forEach(item => {
         const entityId = item.getAttribute('data-entity-id');
-        item.addEventListener('click', () => this.handleEntityClick(entityId, hass));
+        item.addEventListener('click', () => this.handleEntityClick(entityId));
       });
     }
   }
   
-  renderResults(hass) {
+  renderResults() {
     if (this.filteredEntities.length === 0) {
       // Show message if no search or no results
       const searchInput = this.shadowRoot.querySelector('.search-input');
