@@ -1,244 +1,430 @@
-if(!customElements.get("ha-search-card")) {
-  class HASearchCard extends HTMLElement {
-    constructor() {
-      super();
-      this.attachShadow({ mode: "open" });
-      this.searchTerm = ""; // Initialisierung im Constructor
-      this.entities = null;
-      this.pageSize = 12;
-      this._initialized = false;
-    }
-
-    setConfig(config) {
-      this.config = config;
-    }
-
-    set hass(hass) {
-      const firstSet = !this._hass;
-      this._hass = hass;
-      
-      if (!this._initialized) {
-        this._initialized = true;
-        this.initializeCard();
-        this.loadData();
-      } else if (this.entities) {
-        this.updateEntityStates();
-      }
-    }
-
-    initializeCard() {
-      const card = document.createElement("ha-card");
-      const content = document.createElement("div");
-      content.className = "card-content";
-
-      const style = document.createElement("style");
-      style.textContent = `
-        .card-content { padding: 16px; }
-        .search-input {
-          width: 100%;
-          padding: 8px;
-          border: 1px solid var(--divider-color);
-          border-radius: 4px;
-          margin-bottom: 16px;
-        }
-        .results-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-          gap: 12px;
-        }
-        .entity-card {
-          background: var(--card-background-color);
-          border-radius: 4px;
-          border: 1px solid var(--divider-color);
-          padding: 12px;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-        }
-        .entity-name {
-          margin-left: 8px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        .area-header {
-          grid-column: 1/-1;
-          padding: 8px;
-          margin-top: 8px;
-          background: var(--primary-color);
-          color: var(--text-primary-color);
-          border-radius: 4px;
-          font-weight: bold;
-        }
-      `;
-
-      const searchInput = document.createElement("input");
-      searchInput.type = "text";
-      searchInput.className = "search-input";
-      searchInput.placeholder = "Nach Geräten oder Räumen suchen...";
-      
-      searchInput.addEventListener("input", (e) => {
-        this.searchTerm = e.target.value || ""; // Stelle sicher, dass searchTerm nie undefined ist
-        this.updateResults();
-      });
-
-      this.resultsContainer = document.createElement("div");
-      this.resultsContainer.className = "results-grid";
-
-      content.appendChild(searchInput);
-      content.appendChild(this.resultsContainer);
-      this.shadowRoot.appendChild(style);
-      card.appendChild(content);
-      this.shadowRoot.appendChild(card);
-    }
-
-    async loadData() {
-      if (!this._hass) return;
-
-      try {
-        const [areaReg, deviceReg, entityReg] = await Promise.all([
-          this._hass.callWS({ type: "config/area_registry/list" }),
-          this._hass.callWS({ type: "config/device_registry/list" }),
-          this._hass.callWS({ type: "config/entity_registry/list" })
-        ]);
-
-        // Erstelle Maps für schnellen Zugriff
-        const deviceAreaMap = new Map(
-          deviceReg.map(device => [device.id, device.area_id])
-        );
-
-        const areaMap = new Map(
-          areaReg.map(area => [area.area_id, area.name])
-        );
-
-        // Verarbeite Entities
-        this.entities = Object.entries(this._hass.states).map(([id, state]) => {
-          const entityEntry = entityReg.find(e => e.entity_id === id);
-          const areaId = entityEntry?.area_id || 
-                        (entityEntry?.device_id ? deviceAreaMap.get(entityEntry.device_id) : null);
-          
-          return {
-            id,
-            name: state.attributes.friendly_name || id,
-            type: id.split('.')[0],
-            state: state.state,
-            areaId,
-            areaName: areaId ? areaMap.get(areaId) : null
-          };
-        });
-
-        this.updateResults();
-      } catch (error) {
-        console.error("Fehler beim Laden der Daten:", error);
-      }
-    }
-
-    updateEntityStates() {
-      if (!this.entities) return;
-      
-      let needsUpdate = false;
-      this.entities.forEach(entity => {
-        const newState = this._hass.states[entity.id]?.state;
-        if (newState !== entity.state) {
-          entity.state = newState;
-          needsUpdate = true;
-        }
-      });
-
-      if (needsUpdate) {
-        this.updateResults();
-      }
-    }
-
-    updateResults() {
-      if (!this.resultsContainer || !this.entities) return;
-
-      const searchTerm = (this.searchTerm || "").toLowerCase();
-      let results = [];
-
-      if (searchTerm) {
-        // Gruppiere nach Areas
-        const areaGroups = new Map();
-        const unassigned = [];
-
-        this.entities.forEach(entity => {
-          if (entity.name.toLowerCase().includes(searchTerm) ||
-              entity.id.toLowerCase().includes(searchTerm) ||
-              (entity.areaName && entity.areaName.toLowerCase().includes(searchTerm))) {
-            
-            if (entity.areaName) {
-              if (!areaGroups.has(entity.areaName)) {
-                areaGroups.set(entity.areaName, []);
-              }
-              areaGroups.get(entity.areaName).push(entity);
-            } else {
-              unassigned.push(entity);
-            }
-          }
-        });
-
-        // Füge gruppierte Ergebnisse hinzu
-        for (const [areaName, entities] of areaGroups) {
-          results.push({ type: 'header', content: areaName });
-          results.push(...entities.map(e => ({ type: 'entity', content: e })));
-        }
-
-        // Füge nicht zugewiesene Entities hinzu
-        if (unassigned.length) {
-          if (results.length) {
-            results.push({ type: 'header', content: 'Weitere Ergebnisse' });
-          }
-          results.push(...unassigned.map(e => ({ type: 'entity', content: e })));
-        }
-      } else {
-        // Zeige die ersten pageSize Entities
-        results = this.entities
-          .slice(0, this.pageSize)
-          .map(e => ({ type: 'entity', content: e }));
-      }
-
-      // Generiere HTML
-      const html = results.length ? 
-        results.map(result => {
-          if (result.type === 'header') {
-            return `<div class="area-header">${result.content}</div>`;
-          }
-          const entity = result.content;
-          return `
-            <div class="entity-card" data-entity-id="${entity.id}">
-              <ha-icon icon="${this.getIcon(entity)}"></ha-icon>
-              <span class="entity-name">${entity.name}</span>
-            </div>
-          `;
-        }).join('') :
-        '<div style="grid-column: 1/-1; text-align: center; padding: 16px;">Keine Ergebnisse gefunden</div>';
-
-      // Update DOM
-      if (this.resultsContainer.innerHTML !== html) {
-        this.resultsContainer.innerHTML = html;
-        
-        this.resultsContainer.querySelectorAll('.entity-card').forEach(card => {
-          card.addEventListener('click', () => {
-            this.dispatchEvent(new CustomEvent("hass-more-info", {
-              detail: { entityId: card.dataset.entityId },
-              bubbles: true,
-              composed: true
-            }));
-          });
-        });
-      }
-    }
-
-    getIcon(entity) {
-      const iconMap = {
-        light: entity.state === "on" ? "mdi:lightbulb" : "mdi:lightbulb-outline",
-        switch: entity.state === "on" ? "mdi:toggle-switch" : "mdi:toggle-switch-off",
-        climate: "mdi:thermostat",
-        cover: "mdi:window-shutter"
-      };
-      return iconMap[entity.type] || "mdi:help-circle";
-    }
+class HASearchCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this.entities = [];
+    this.filteredEntities = [];
+    this.areas = [];
+    this.debounceTimeout = null;
+    this.initialized = false;
   }
 
-  customElements.define("ha-search-card", HASearchCard);
+  setConfig(config) {
+    this.config = {
+      title: 'Entity Search',
+      icon: 'mdi:magnify',
+      max_results: 10,
+      ...config
+    };
+  }
+
+  static getStubConfig() {
+    return {
+      title: 'Entity Search',
+      icon: 'mdi:magnify',
+      max_results: 10
+    };
+  }
+
+  async connectedCallback() {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    const hass = document.querySelector('home-assistant').hass;
+    
+    // Initial render with loading state
+    this.render(hass, true);
+    
+    // Get all entities and areas in Home Assistant
+    await this.updateEntitiesAndAreas(hass);
+    
+    // Render with actual content
+    this.render(hass);
+    
+    // Set up mutation observer to watch for Home Assistant data changes
+    this.setupDataUpdateObserver();
+  }
+
+  async updateEntitiesAndAreas(hass) {
+    if (!hass) return;
+
+    try {
+      // Get all areas
+      const areaRegistry = await hass.callWS({ type: 'config/area_registry/list' });
+      this.areas = areaRegistry;
+      
+      // Get entity registry
+      const entityRegistry = await hass.callWS({ type: 'config/entity_registry/list' });
+      
+      // Filter entities to only include those assigned to an area
+      this.entities = entityRegistry
+        .filter(entity => entity.area_id !== null)
+        .map(entity => {
+          const stateObj = hass.states[entity.entity_id];
+          const area = this.areas.find(area => area.area_id === entity.area_id);
+          
+          return {
+            entity_id: entity.entity_id,
+            name: entity.name || (stateObj ? stateObj.attributes.friendly_name : entity.entity_id),
+            state: stateObj ? stateObj.state : 'unavailable',
+            icon: stateObj ? stateObj.attributes.icon : null,
+            area: area ? area.name : 'Unknown',
+            area_id: entity.area_id,
+            domain: entity.entity_id.split('.')[0]
+          };
+        });
+      
+      // Sort entities by area name, then by entity name
+      this.entities.sort((a, b) => {
+        if (a.area < b.area) return -1;
+        if (a.area > b.area) return 1;
+        if (a.name < b.name) return -1;
+        if (a.name > b.name) return 1;
+        return 0;
+      });
+      
+      // Set initial filtered entities to empty
+      this.filteredEntities = [];
+    } catch (error) {
+      console.error('Error fetching Home Assistant data:', error);
+    }
+  }
+  
+  setupDataUpdateObserver() {
+    // Create a MutationObserver to detect when Home Assistant data changes
+    const hassElement = document.querySelector('home-assistant');
+    if (!hassElement) return;
+    
+    const observer = new MutationObserver(() => {
+      const hass = hassElement.hass;
+      if (hass && this.entities.length > 0) {
+        // Update entity states
+        this.entities.forEach(entity => {
+          const stateObj = hass.states[entity.entity_id];
+          if (stateObj) {
+            entity.state = stateObj.state;
+            entity.icon = stateObj.attributes.icon;
+          }
+        });
+        
+        // Re-render if we have filtered results
+        if (this.filteredEntities.length > 0) {
+          this.render(hass);
+        }
+      }
+    });
+    
+    observer.observe(hassElement, { attributes: true });
+  }
+
+  search(query, hass) {
+    if (!query) {
+      this.filteredEntities = [];
+      this.render(hass);
+      return;
+    }
+    
+    const searchTerms = query.toLowerCase().split(' ').filter(term => term.length > 0);
+    
+    this.filteredEntities = this.entities.filter(entity => {
+      // Check if all search terms are found in entity_id, name, area, or domain
+      return searchTerms.every(term => 
+        entity.entity_id.toLowerCase().includes(term) ||
+        entity.name.toLowerCase().includes(term) ||
+        entity.area.toLowerCase().includes(term) ||
+        entity.domain.toLowerCase().includes(term)
+      );
+    });
+    
+    // Limit results
+    this.filteredEntities = this.filteredEntities.slice(0, this.config.max_results);
+    
+    this.render(hass);
+  }
+
+  handleSearchInput(e, hass) {
+    const query = e.target.value;
+    
+    // Debounce search to avoid excessive rendering
+    clearTimeout(this.debounceTimeout);
+    this.debounceTimeout = setTimeout(() => {
+      this.search(query, hass);
+    }, 150);
+  }
+
+  handleEntityClick(entityId, hass) {
+    // Show more-info dialog for the entity
+    const event = new CustomEvent('hass-more-info', {
+      detail: { entityId },
+      bubbles: true,
+      composed: true
+    });
+    this.dispatchEvent(event);
+  }
+
+  render(hass, isLoading = false) {
+    if (!hass) return;
+
+    const styles = `
+      :host {
+        --search-text-color: var(--primary-text-color);
+        --search-background: var(--card-background-color, var(--paper-card-background-color, white));
+        --search-border-color: var(--divider-color);
+        --search-focus-border: var(--primary-color);
+        --result-hover: var(--secondary-background-color);
+      }
+      
+      .card-content {
+        padding: 16px;
+      }
+      
+      .header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      
+      .header ha-icon {
+        margin-right: 8px;
+        color: var(--primary-color);
+      }
+      
+      .header h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 500;
+        color: var(--search-text-color);
+      }
+      
+      .search-container {
+        position: relative;
+        width: 100%;
+      }
+      
+      .search-input {
+        width: 100%;
+        padding: 10px 16px;
+        padding-left: 40px;
+        border: 1px solid var(--search-border-color);
+        border-radius: 4px;
+        background: var(--search-background);
+        color: var(--search-text-color);
+        font-size: 16px;
+        box-sizing: border-box;
+        transition: border-color 0.2s ease;
+      }
+      
+      .search-input:focus {
+        outline: none;
+        border-color: var(--search-focus-border);
+      }
+      
+      .search-icon {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--secondary-text-color);
+      }
+      
+      .results {
+        margin-top: 12px;
+        max-height: 500px;
+        overflow-y: auto;
+      }
+      
+      .result-item {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      }
+      
+      .result-item:hover {
+        background-color: var(--result-hover);
+      }
+      
+      .entity-icon {
+        margin-right: 12px;
+      }
+      
+      .entity-info {
+        flex: 1;
+      }
+      
+      .entity-name {
+        font-weight: 500;
+        color: var(--search-text-color);
+      }
+      
+      .entity-secondary {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        margin-top: 2px;
+      }
+      
+      .entity-id {
+        opacity: 0.7;
+      }
+      
+      .entity-area {
+        font-style: italic;
+      }
+      
+      .entity-state {
+        margin-left: 8px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        background: var(--result-hover);
+        font-size: 12px;
+      }
+      
+      .no-results, .loading {
+        padding: 20px 0;
+        text-align: center;
+        color: var(--secondary-text-color);
+        font-style: italic;
+      }
+      
+      @media (max-width: 600px) {
+        .card-content {
+          padding: 12px;
+        }
+        
+        .header h2 {
+          font-size: 16px;
+        }
+        
+        .search-input {
+          font-size: 14px;
+          padding: 8px 12px 8px 36px;
+        }
+        
+        .search-icon {
+          left: 10px;
+        }
+        
+        .entity-name {
+          font-size: 14px;
+        }
+        
+        .entity-secondary {
+          font-size: 11px;
+        }
+      }
+    `;
+    
+    const htmlContent = `
+      <ha-card>
+        <div class="card-content">
+          <div class="header">
+            <ha-icon icon="${this.config.icon}"></ha-icon>
+            <h2>${this.config.title}</h2>
+          </div>
+          
+          <div class="search-container">
+            <ha-icon class="search-icon" icon="mdi:magnify"></ha-icon>
+            <input
+              type="text"
+              class="search-input"
+              placeholder="Suche nach Entities..."
+              @input="${e => this.handleSearchInput(e, hass)}"
+            >
+          </div>
+          
+          <div class="results">
+            ${isLoading ? `
+              <div class="loading">Daten werden geladen...</div>
+            ` : this.renderResults(hass)}
+          </div>
+        </div>
+      </ha-card>
+    `;
+    
+    // Set the content to the shadow root
+    this.shadowRoot.innerHTML = `
+      <style>${styles}</style>
+      ${htmlContent}
+    `;
+    
+    // Add event listeners to result items
+    if (!isLoading) {
+      this.shadowRoot.querySelectorAll('.result-item').forEach(item => {
+        const entityId = item.getAttribute('data-entity-id');
+        item.addEventListener('click', () => this.handleEntityClick(entityId, hass));
+      });
+    }
+  }
+  
+  renderResults(hass) {
+    if (this.filteredEntities.length === 0) {
+      // Show message if no search or no results
+      const searchInput = this.shadowRoot.querySelector('.search-input');
+      if (!searchInput || !searchInput.value) {
+        return `<div class="no-results">Gib einen Suchbegriff ein, um Entities zu finden</div>`;
+      } else {
+        return `<div class="no-results">Keine passenden Entities gefunden</div>`;
+      }
+    }
+    
+    return this.filteredEntities.map(entity => {
+      // Determine entity icon
+      let icon = entity.icon;
+      if (!icon) {
+        // Fallback icons based on domain
+        const domainIcons = {
+          light: 'mdi:lightbulb',
+          switch: 'mdi:toggle-switch',
+          sensor: 'mdi:eye',
+          binary_sensor: 'mdi:checkbox-marked-circle',
+          climate: 'mdi:thermostat',
+          cover: 'mdi:window-shutter',
+          media_player: 'mdi:cast',
+          camera: 'mdi:video',
+          fan: 'mdi:fan',
+          vacuum: 'mdi:robot-vacuum',
+          lock: 'mdi:lock',
+          weather: 'mdi:weather-partly-cloudy',
+          automation: 'mdi:robot',
+          script: 'mdi:file-document',
+          scene: 'mdi:palette',
+          person: 'mdi:account',
+          device_tracker: 'mdi:crosshairs-gps'
+        };
+        
+        icon = domainIcons[entity.domain] || 'mdi:eye';
+      }
+      
+      return `
+        <div class="result-item" data-entity-id="${entity.entity_id}">
+          <ha-icon class="entity-icon" icon="${icon}"></ha-icon>
+          <div class="entity-info">
+            <div class="entity-name">${entity.name}</div>
+            <div class="entity-secondary">
+              <span class="entity-id">${entity.entity_id}</span>
+              <span class="entity-area">${entity.area}</span>
+            </div>
+          </div>
+          <div class="entity-state">${entity.state}</div>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  getCardSize() {
+    return 3;
+  }
 }
+
+customElements.define('ha-search-card', HASearchCard);
+
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: 'ha-search-card',
+  name: 'Home Assistant Search Card',
+  description: 'Search for entities by name, ID, room or type'
+});
