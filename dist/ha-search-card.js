@@ -161,32 +161,55 @@ class HASearchCard extends HTMLElement {
   }
 
   search(query) {
-    if (!query) {
+    // Ensure we have entities to search through
+    if (!this.entities || this.entities.length === 0) {
+      console.warn("[ha-search-card] No entities available for search");
+      return;
+    }
+    
+    // Clear results if query is empty
+    if (!query || query.trim() === '') {
       this.filteredEntities = [];
       this.render();
       return;
     }
     
-    const searchTerms = query.toLowerCase().split(' ').filter(term => term.length > 0);
+    console.log("[ha-search-card] Searching for:", query, "in", this.entities.length, "entities");
     
+    // Split search terms and filter out empty ones
+    const searchTerms = query.toLowerCase().trim().split(/\s+/).filter(term => term.length > 0);
+    
+    // Search through entities
     this.filteredEntities = this.entities.filter(entity => {
+      // For debugging
+      const entityId = entity.entity_id?.toLowerCase() || '';
+      const entityName = entity.name?.toLowerCase() || '';
+      const entityArea = entity.area?.toLowerCase() || '';
+      const entityDomain = entity.domain?.toLowerCase() || '';
+      
       // Check if all search terms are found in entity_id, name, area, or domain
       return searchTerms.every(term => 
-        entity.entity_id.toLowerCase().includes(term) ||
-        (entity.name && entity.name.toLowerCase().includes(term)) ||
-        (entity.area && entity.area.toLowerCase().includes(term)) ||
-        entity.domain.toLowerCase().includes(term)
+        entityId.includes(term) ||
+        entityName.includes(term) ||
+        entityArea.includes(term) ||
+        entityDomain.includes(term)
       );
     });
+    
+    console.log("[ha-search-card] Found", this.filteredEntities.length, "matching entities");
     
     // Limit results
     this.filteredEntities = this.filteredEntities.slice(0, this.config.max_results);
     
+    // Force re-render
     this.render();
   }
 
   handleSearchInput(e) {
     const query = e.target.value;
+    
+    // Log for debugging
+    console.log("[ha-search-card] Search input:", query);
     
     // Debounce search to avoid excessive rendering
     clearTimeout(this.debounceTimeout);
@@ -392,6 +415,7 @@ class HASearchCard extends HTMLElement {
               class="search-input"
               placeholder="Suche nach Entities..."
               @input="${e => this.handleSearchInput(e)}"
+              @keyup="${e => this.handleSearchInput(e)}"
             >
           </div>
           
